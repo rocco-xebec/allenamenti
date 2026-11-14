@@ -1,8 +1,8 @@
 // Cache offline dell'app. Aumenta VERSION a ogni rilascio per aggiornare i file sull'iPhone.
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const FILES = ['./', './index.html', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/db.js', './js/parse.js', './js/muscles.js', './js/stats.js', './js/data.js', './js/gcal.js', './js/pdf.js',
-  './vendor/chart.umd.js', './vendor/jspdf.umd.min.js', './vendor/jspdf.plugin.autotable.min.js',
+  './vendor/chart.umd.js', './vendor/jspdf.umd.min.js', './vendor/jspdf.plugin.autotable.min.js', './vendor/fflate.min.js', './js/health.js',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

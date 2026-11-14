@@ -72,7 +72,7 @@ p { margin: 0 0 8px; }
 .btn.good { background: var(--good); color: #fff; }
 .btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); }
 .btn.ghost { background: transparent; color: var(--accent); padding-left: 8px; padding-right: 8px; }
-.btn.block { width: 100%; }
+.btn.block { width: 100%; display: block; }
 .btn.sm { min-height: 36px; padding: 6px 12px; font-size: 14px; border-radius: 10px; }
 .btn:disabled { opacity: .5; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }

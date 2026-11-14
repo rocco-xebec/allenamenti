@@ -105,7 +105,8 @@ export function weeklySeries(state, n, ref = new Date()) {
 }
 
 // ---------- Abbinamento calendario <-> Apple Watch ----------
-const COMPAT = (a, b) => a === b || a === 'altro' || b === 'altro';
+const FAMILY = { padel: 'racchetta', tennis: 'racchetta', corsa: 'piedi', camminata: 'piedi' };
+const COMPAT = (a, b) => a === b || a === 'altro' || b === 'altro' || (FAMILY[a] && FAMILY[a] === FAMILY[b]);
 const TOL = 30 * 60000;
 function overlaps(a, b) {
   const as = new Date(a.start).getTime(), ae = new Date(a.end).getTime();
@@ -149,7 +150,7 @@ function mergeInto(a, inc) {
   if (inc.extId && !a.extIds.includes(inc.extId)) a.extIds.push(inc.extId);
   if (inc.source === 'calendar') {
     a.title = inc.title || a.title;
-    if (a.type === 'altro') a.type = inc.type;
+    a.type = inc.type !== 'altro' ? inc.type : a.type; // il calendario dice cosa hai fatto davvero (es. Padel registrato come Tennis)
     if (!a.sources.includes('watch')) { a.start = inc.start; a.end = inc.end; a.durationMin = inc.durationMin; }
   } else {
     // il Watch ha la misura reale

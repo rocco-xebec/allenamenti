@@ -4,6 +4,7 @@ import { MUSCLES, guessMuscles } from './muscles.js';
 import { SEED_TEXT, DEFAULT_SETTINGS, TYPE_LABEL, TYPE_ICON } from './data.js';
 import * as S from './stats.js';
 import * as gcal from './gcal.js';
+import { readHealthExport } from './health.js';
 import { exportReportPdf } from './pdf.js';
 
 const $app = document.getElementById('app');
@@ -67,7 +68,6 @@ async function init() {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.current) { acquireWake(); render(); } });
   if (!location.hash) location.hash = state.current ? '#/allena' : '#/oggi';
   render();
-  if (location.hash === '#/attivita/auto') setTimeout(watchImportSheet, 50);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 
@@ -132,7 +132,7 @@ function viewToday() {
   }
   const items = activityFeed(S.periodRange('week', now));
   h += `<h2>Attività della settimana</h2><div class="card">${items.length ? items.map(feedItem).join('') : '<div class="empty">Nessuna attività registrata</div>'}</div>
-  <div class="btn-row"><button class="btn" data-a="gsync">📅 Sincronizza calendario</button><button class="btn" data-a="watch-import">⌚ Importa Watch</button></div>`;
+  <div class="btn-row"><button class="btn" data-a="gsync">📅 Sincronizza calendario</button><button class="btn" data-a="watch-import">❤️ Importa da Salute</button></div>`;
   return h;
 }
 function kpi(label, value, prev, cur) {
@@ -513,10 +513,10 @@ function viewActivities() {
   const to = new Date(); const from = new Date(Date.now() - 90 * S.DAY);
   const items = activityFeed([from, new Date(to.getTime() + S.DAY)]);
   let h = `<h1>Attività</h1>
-  <div class="btn-row" style="margin-bottom:12px"><button class="btn primary" data-a="gsync">📅 Calendario</button><button class="btn primary" data-a="watch-import">⌚ Watch</button></div>
+  <div class="btn-row" style="margin-bottom:12px"><button class="btn primary" data-a="gsync">📅 Calendario</button><button class="btn primary" data-a="watch-import">❤️ Salute</button></div>
   <button class="btn block" data-a="act-new" style="margin-bottom:12px">+ Aggiungi a mano</button>
   ${state.settings.lastSync ? `<p class="tiny">Ultima sincronizzazione calendario: ${relDays(state.settings.lastSync)} alle ${fmtTime(state.settings.lastSync)}</p>` : ''}`;
-  if (!items.length) return h + `<div class="card empty">Nessuna attività negli ultimi 90 giorni.<br>Sincronizza il calendario o importa dal Watch.</div>`;
+  if (!items.length) return h + `<div class="card empty">Nessuna attività negli ultimi 90 giorni.<br>Sincronizza il calendario o importa da Salute.</div>`;
   let curWeek = null, buf = '';
   for (const it of items) {
     const wk = S.startOfWeek(it.start).getTime();
@@ -527,7 +527,7 @@ function viewActivities() {
     }
     buf += feedItem(it);
   }
-  h += `<div class="card">${buf}</div><p class="tiny">📅 = calendario Google · ⌚ = Apple Watch · ✍️ = manuale. Un evento e un allenamento Watch sovrapposti vengono uniti automaticamente.</p>`;
+  h += `<div class="card">${buf}</div><p class="tiny">📅 = calendario Google · ⌚ = Salute/Apple Watch · ✍️ = manuale. Un evento e un allenamento Watch sovrapposti vengono uniti automaticamente.</p>`;
   return h;
 }
 function activitySheet(id) {
@@ -593,24 +593,53 @@ async function googleSync() {
   } catch (e) { alert('Google Calendar: ' + e.message); }
 }
 function watchImportSheet() {
-  sheet(`<h2 style="margin-top:0">Importa da Apple Watch</h2>
-  <p class="small muted">Esegui il Comando rapido <b>"Esporta allenamenti"</b> (vedi Altro → Guida): copia gli allenamenti negli appunti. Poi tocca <b>Incolla</b>. Funziona anche con un file JSON di app come Health Auto Export.</p>
-  <div class="btn-row" style="margin-bottom:10px"><button class="btn primary" id="wi-paste">Incolla dagli appunti</button><label class="btn" style="text-align:center">File…<input type="file" id="wi-file" accept=".json,.txt,.csv,application/json,text/*" hidden></label></div>
-  <textarea id="wi-text" placeholder="W;Padel;14/11/2026 18:30;14/11/2026 20:00;90;650;;142"></textarea>
-  <div id="wi-prev" style="margin-top:10px"></div>`, (root, close) => {
-    const ta = root.querySelector('#wi-text'), prev = root.querySelector('#wi-prev');
-    const preview = () => {
-      const list = parseActivitiesText(ta.value);
-      if (!list.length) { prev.innerHTML = ta.value.trim() ? '<p class="small" style="color:var(--danger)">Nessun allenamento riconosciuto.</p>' : ''; return; }
-      prev.innerHTML = `<div class="card">${list.slice(0, 30).map((a) => `<div class="small">${TYPE_ICON[a.type] || '⚡'} ${esc(a.title || a.type)} · ${fmtDate(a.start)} ${fmtTime(a.start)} · ${fmtMin(a.durationMin)}${a.kcal ? ' · ' + fmtInt(a.kcal) + ' kcal' : ''} <span class="src">${a.source === 'calendar' ? '📅' : '⌚'}</span></div>`).join('')}
-        ${list.length > 30 ? `<div class="tiny">…e altre ${list.length - 30}</div>` : ''}</div><button class="btn primary block" id="wi-go">Importa ${list.length}</button>`;
-      prev.querySelector('#wi-go').onclick = () => { const c = importActivities(list); close(); rerender(); toast(`Watch: ${c.new} nuove, ${c.merged} unite, ${c.updated + c.dup} già presenti`, 3500); };
+  const st = state.settings;
+  const defSince = st.lastHealthImport ? 'last' : '90';
+  sheet(`<h2 style="margin-top:0">Importa da Salute</h2>
+  <p class="small muted">Gli allenamenti che vedi in Fitness (Apple Watch compreso) stanno nell'app <b>Salute</b>. Esportali così:</p>
+  <ol class="small" style="padding-left:18px;margin:0 0 10px">
+    <li>App <b>Salute</b> → tocca la tua foto in alto a destra → <b>Esporta tutti i dati sanitari</b> → Esporta (può volerci un minuto).</li>
+    <li>Scegli <b>Salva in File</b> (es. iCloud Drive). Viene salvato <b>esportazione.zip</b>.</li>
+    <li>Qui sotto tocca <b>Scegli export di Salute</b> e seleziona quel file.</li></ol>
+  ${st.lastHealthImport ? `<p class="tiny">Ultimo import: ${relDays(st.lastHealthImport)}.</p>` : ''}
+  <label class="field"><span>Periodo da importare</span><select id="hi-since">
+    ${st.lastHealthImport ? `<option value="last" ${defSince === 'last' ? 'selected' : ''}>Dall'ultimo import</option>` : ''}
+    <option value="30">Ultimi 30 giorni</option><option value="90" ${defSince === '90' ? 'selected' : ''}>Ultimi 90 giorni</option>
+    <option value="365">Ultimo anno</option><option value="all">Tutto lo storico</option></select></label>
+  <label class="btn primary block" style="text-align:center">Scegli export di Salute (.zip)<input type="file" id="hi-file" accept=".zip,.xml,application/zip,application/xml,text/xml" hidden></label>
+  <div id="hi-status" class="small" style="margin-top:10px"></div>
+  <div id="wi-prev" style="margin-top:10px"></div>
+  <details style="margin-top:14px"><summary class="small">Altri formati (JSON di Health Auto Export, testo)</summary>
+    <div class="btn-row" style="margin:10px 0"><button class="btn" id="wi-paste">Incolla</button><label class="btn" style="text-align:center">File JSON…<input type="file" id="wi-file" accept=".json,.txt,.csv,application/json,text/*" hidden></label></div>
+    <textarea id="wi-text" placeholder="W;Tennis;14/11/2026 18:30;14/11/2026 20:00;90;650;;142"></textarea></details>`, (root, close) => {
+    const ta = root.querySelector('#wi-text'), prev = root.querySelector('#wi-prev'), status = root.querySelector('#hi-status');
+    const showList = (list, label) => {
+      if (!list.length) { prev.innerHTML = '<p class="small" style="color:var(--danger)">Nessun allenamento nel periodo scelto.</p>'; return; }
+      const sorted = [...list].sort((x, y) => y.start.localeCompare(x.start));
+      prev.innerHTML = `<div class="card">${sorted.slice(0, 40).map((a) => `<div class="small">${TYPE_ICON[a.type] || '⚡'} ${esc(a.title || a.type)} · ${fmtDate(a.start)} ${fmtTime(a.start)} · ${fmtMin(a.durationMin)}${a.kcal ? ' · ' + fmtInt(a.kcal) + ' kcal' : ''}${a.distanceKm ? ' · ' + dec(a.distanceKm) + ' km' : ''}</div>`).join('')}
+        ${list.length > 40 ? `<div class="tiny">…e altri ${list.length - 40}</div>` : ''}</div><button class="btn primary block" id="wi-go">Importa ${list.length} allenamenti</button>`;
+      prev.querySelector('#wi-go').onclick = () => {
+        const c = importActivities(list);
+        if (label === 'health') { st.lastHealthImport = new Date().toISOString(); save(); }
+        close(); rerender(); toast(`Salute: ${c.new} nuovi, ${c.merged} uniti a calendario/palestra, ${c.updated + c.dup} già presenti`, 4000);
+      };
     };
+    root.querySelector('#hi-file').onchange = async (ev) => {
+      const f = ev.target.files[0]; if (!f) return;
+      const v = root.querySelector('#hi-since').value;
+      const since = v === 'all' ? null : v === 'last' ? new Date(new Date(st.lastHealthImport).getTime() - 7 * S.DAY) : new Date(Date.now() - +v * S.DAY);
+      prev.innerHTML = '';
+      try {
+        const mb = (f.size / 1048576).toFixed(0);
+        const list = await readHealthExport(f, { since, onProgress: (x) => { status.textContent = `Leggo l'export (${mb} MB)… ${Math.round(x * 100)}%`; } });
+        status.textContent = `Trovati ${list.length} allenamenti${since ? ' dal ' + fmtDate(since, { day: 'numeric', month: 'short', year: 'numeric' }) : ''}.`;
+        showList(list, 'health');
+      } catch (e) { console.error(e); status.innerHTML = `<span style="color:var(--danger)">Errore: ${esc(e.message)}</span>`; }
+    };
+    const preview = () => { const list = parseActivitiesText(ta.value); if (ta.value.trim()) showList(list, 'text'); else prev.innerHTML = ''; };
     ta.addEventListener('input', preview);
     root.querySelector('#wi-paste').onclick = async () => { try { ta.value = await navigator.clipboard.readText(); preview(); } catch { toast('Tieni premuto nel riquadro e scegli Incolla'); } };
     root.querySelector('#wi-file').onchange = async (ev) => { const f = ev.target.files[0]; if (f) { ta.value = await f.text(); preview(); } };
-    // avvio automatico dal Comando: #/attivita?watch
-    if (location.hash.includes('auto')) root.querySelector('#wi-paste').click();
   });
 }
 
@@ -766,7 +795,7 @@ export function progChart(canvas, eid, light = false, animation) {
 function viewSettings() {
   const st = state.settings;
   return `<h1>Altro</h1>
-  <div class="card tap" data-a="go" data-href="#/guida"><div class="row between"><div><h3>Guida</h3><div class="small muted">Installazione, Google Calendar, Comando per Apple Watch</div></div><span>›</span></div></div>
+  <div class="card tap" data-a="go" data-href="#/guida"><div class="row between"><div><h3>Guida</h3><div class="small muted">Installazione, Google Calendar, import da Salute</div></div><span>›</span></div></div>
   <h2>Backup su iCloud Drive</h2>
   <div class="card"><p class="small muted">I dati sono salvati su questo iPhone. Fai un backup regolare: scegli <b>Salva in File → iCloud Drive</b>. ${st.lastBackup ? 'Ultimo: ' + relDays(st.lastBackup) + '.' : ''}</p>
   <div class="btn-row"><button class="btn primary" data-a="backup">Esporta backup</button><label class="btn" style="text-align:center">Ripristina…<input type="file" data-c="restore" accept=".json,application/json" hidden></label></div></div>
@@ -784,7 +813,7 @@ function viewSettings() {
   <h2>Dati</h2>
   <div class="card stack"><p class="small muted">${state.sessions.length} sedute · ${state.activities.length} attività · ${state.weightLog.length} modifiche di carico</p>
   <button class="btn danger block" data-a="reset">Cancella tutti i dati</button></div>
-  <p class="tiny" style="text-align:center;margin-top:20px">Allenamenti · v1.0</p>`;
+  <p class="tiny" style="text-align:center;margin-top:20px">Allenamenti · v1.1</p>`;
 }
 function viewGuide() {
   const url = location.origin + location.pathname;
@@ -798,15 +827,13 @@ function viewGuide() {
     <li><b>Credenziali → Crea credenziali → ID client OAuth</b> → Applicazione web. In <b>Origini JavaScript autorizzate</b> metti <b>${esc(location.origin)}</b>.</li>
     <li>Copia l'ID client e incollalo in Altro → Google Calendar.</li></ol>
     <p class="small muted" style="margin-top:8px">Vengono importati solo gli eventi passati il cui titolo contiene le parole chiave (padel, tennis, corsa…).</p></div>
-  <div class="card"><h3>4. Comando rapido per Apple Watch</h3>
-    <p class="small">Nell'app <b>Comandi</b> crea un nuovo comando "Esporta allenamenti":</p>
+  <div class="card"><h3>4. Allenamenti da Fitness / Apple Watch</h3>
+    <p class="small">I dati di Fitness stanno nell'app Salute. Una volta a settimana (o quando vuoi il report aggiornato):</p>
     <ol class="small" style="padding-left:18px;margin:0">
-      <li><b>Trova campioni di salute</b> dove Tipo è <b>Allenamenti</b> e Data inizio è negli ultimi <b>14 giorni</b>. Ordina per Data inizio, più recenti prima.</li>
-      <li><b>Ripeti con ciascuno</b> → dentro: azione <b>Testo</b> con: <code>W;</code>[Tipo];[Data inizio];[Data fine];[Durata];[Energia attiva]  (scegli le variabili toccando "Elemento ripetizione" e la proprietà).</li>
-      <li>Dopo il ripeti: <b>Combina testo</b> (Risultati ripetizione, con A capo) → <b>Copia negli appunti</b>.</li>
-      <li>Ultima azione: <b>Apri URL</b> <code>${esc(url)}#/attivita/auto</code> (facoltativo).</li></ol>
-    <p class="small" style="margin-top:8px">Poi in Attività tocca <b>⌚ Watch → Incolla</b>. Gli allenamenti si uniscono da soli agli eventi del calendario e alle sedute in palestra sovrapposti.</p>
-    <p class="small muted">Automazione: in Comandi → Automazione → <b>Allenamento Apple Watch</b> → "Termina" → esegui "Esporta allenamenti". Se su iOS 27 l'azione non offre il tipo "Allenamenti", usa un'app esportatrice (es. Health Auto Export) e importa il suo file JSON.</p></div>`;
+      <li>Salute → foto profilo → <b>Esporta tutti i dati sanitari</b> → <b>Salva in File</b>.</li>
+      <li>Qui: Attività → <b>❤️ Salute</b> → scegli il file <b>esportazione.zip</b>.</li></ol>
+    <p class="small" style="margin-top:8px">Vengono letti solo gli allenamenti (tipo, durata, kcal attive, distanza, FC media), sul telefono, senza inviare nulla. Gli allenamenti si uniscono da soli agli eventi del calendario e alle sedute in palestra sovrapposti; reimportare lo stesso periodo non crea doppioni.</p>
+    <p class="small muted">Il padel sul Watch si registra di solito come Tennis o Altro: se nel calendario c'è "Padel" alla stessa ora, l'attività diventa Padel.</p></div>`;
 }
 
 // ---------------- sheet ----------------
@@ -946,6 +973,5 @@ function onChange(e) {
   }
 }
 // sheet "auto" dal Comando rapido
-window.addEventListener('hashchange', () => { if (location.hash === '#/attivita/auto') setTimeout(watchImportSheet, 50); });
 
 init();
